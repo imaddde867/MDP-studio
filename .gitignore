@@ -1,0 +1,5 @@
+__pycache__/
+.DS_Store
+
+# Ignore local Swift/Xcode app (not part of this repo)
+MDP_swift_app/
