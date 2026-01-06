@@ -374,7 +374,6 @@ def main() -> None:
         for b in buttons:
             b.draw(screen, font, hover=b.rect.collidepoint((mx, my)))
         slider.draw(screen, font)
-        screen.blit(font.render("More tools soon...", True, PANEL_FG), (PANEL_X + 14, HEIGHT - 34))
 
         pygame.display.flip()
         clock.tick(FPS)
