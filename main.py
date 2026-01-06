@@ -6,6 +6,7 @@ Controls:
  - Middle click: toggle cell
  - R: generate warehouse layout
  - C: clear grid
+ - G: toggle grid lines
  - Q or ESC: quit
 """
 
@@ -176,6 +177,10 @@ def build_grid_overlay() -> pygame.Surface:
     return overlay
 
 
+def grid_label(show_grid: bool) -> str:
+    return f"Grid: {'On' if show_grid else 'Off'} (G)"
+
+
 class Button:
     def __init__(self, rect: pygame.Rect, label: str, on_click, *, enabled: bool = True):
         self.rect = rect
@@ -255,21 +260,31 @@ class Slider:
         return False
 
 
-def build_ui(*, grid: Grid, initial_pillar_prob: float) -> tuple[list[Button], Slider]:
+def build_ui(
+    *,
+    grid: Grid,
+    initial_pillar_prob: float,
+    show_grid: bool,
+    on_toggle_grid,
+) -> tuple[list[Button], Slider, Button]:
     pad = 14
     x = PANEL_X + pad
     w = PANEL_W - 2 * pad
     h = 44
+    y = 50
+    gap = 54
 
+    grid_button = Button(pygame.Rect(x, y + 2 * gap, w, h), grid_label(show_grid), on_toggle_grid)
     buttons = [
-        Button(pygame.Rect(x, 50, w, h), "Generate (R)", lambda: None),
-        Button(pygame.Rect(x, 104, w, h), "Clear (C)", grid.clear),
-        Button(pygame.Rect(x, 170, w, h), "Save (soon)", lambda: None, enabled=False),
-        Button(pygame.Rect(x, 224, w, h), "Load (soon)", lambda: None, enabled=False),
+        Button(pygame.Rect(x, y, w, h), "Generate (R)", lambda: None),
+        Button(pygame.Rect(x, y + gap, w, h), "Clear (C)", grid.clear),
+        grid_button,
+        Button(pygame.Rect(x, y + 3 * gap, w, h), "Save (soon)", lambda: None, enabled=False),
+        Button(pygame.Rect(x, y + 4 * gap, w, h), "Load (soon)", lambda: None, enabled=False),
     ]
 
     slider = Slider(
-        pygame.Rect(x, 330, w, 20),
+        pygame.Rect(x, 384, w, 20),
         value=initial_pillar_prob,
         min_value=0.0,
         max_value=0.25,
@@ -278,10 +293,12 @@ def build_ui(*, grid: Grid, initial_pillar_prob: float) -> tuple[list[Button], S
 
     # Patch in the real generate callback once slider exists.
     buttons[0].on_click = lambda: grid.randomize(pillar_prob=slider.value)
-    return buttons, slider
+    return buttons, slider, grid_button
 
 
-def handle_events(grid: Grid, buttons: list[Button], slider: Slider) -> bool:
+def handle_events(
+    grid: Grid, buttons: list[Button], slider: Slider, *, on_toggle_grid
+) -> bool:
     for e in pygame.event.get():
         if e.type == pygame.QUIT:
             return False
@@ -293,6 +310,8 @@ def handle_events(grid: Grid, buttons: list[Button], slider: Slider) -> bool:
                 grid.randomize(pillar_prob=slider.value)
             elif e.key == pygame.K_c:
                 grid.clear()
+            elif e.key == pygame.K_g:
+                on_toggle_grid()
 
         if slider.handle_event(e):
             continue
@@ -324,15 +343,27 @@ def main() -> None:
 
     grid = Grid()
     overlay = build_grid_overlay()
+    show_grid = True
 
-    buttons, slider = build_ui(grid=grid, initial_pillar_prob=0.05)
+    def toggle_grid() -> None:
+        nonlocal show_grid
+        show_grid = not show_grid
+        grid_button.label = grid_label(show_grid)
+
+    buttons, slider, grid_button = build_ui(
+        grid=grid,
+        initial_pillar_prob=0.05,
+        show_grid=show_grid,
+        on_toggle_grid=toggle_grid,
+    )
     grid.randomize(pillar_prob=slider.value)
 
-    while handle_events(grid, buttons, slider):
+    while handle_events(grid, buttons, slider, on_toggle_grid=toggle_grid):
         screen.fill(BG)
         grid.draw_walls(screen)
         grid.draw_markers(screen)
-        screen.blit(overlay, (0, 0))
+        if show_grid:
+            screen.blit(overlay, (0, 0))
 
         # Panel
         pygame.draw.rect(screen, PANEL_BG, (PANEL_X, 0, PANEL_W, HEIGHT))
