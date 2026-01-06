@@ -31,6 +31,9 @@ BTN_BG = (245, 245, 245)
 BTN_HOVER = (235, 235, 235)
 BTN_DISABLED = (210, 210, 210)
 
+ROBOT = (255, 215, 0)
+TARGET = (0, 180, 0)
+
 # Grid uses the left area; panel uses the right.
 COLS = (WIDTH - PANEL_W_TARGET) // CELL
 ROWS = HEIGHT // CELL
@@ -43,14 +46,23 @@ class Grid:
     def __init__(self, cols: int = COLS, rows: int = ROWS, cell: int = CELL):
         self.cols, self.rows, self.cell = cols, rows, cell
         self.cells: list[list[bool]] = [[False] * cols for _ in range(rows)]
+        self.robot: tuple[int, int] | None = None
+        self.target: tuple[int, int] | None = None
 
     def clear(self) -> None:
         empty = [False] * self.cols
         for row in self.cells:
             row[:] = empty
+        self.robot = None
+        self.target = None
+
+    def _is_marker(self, c: int, r: int) -> bool:
+        return (self.robot == (c, r)) or (self.target == (c, r))
 
     def _set_cell(self, c: int, r: int, value: bool) -> None:
         if 0 <= c < self.cols and 0 <= r < self.rows:
+            if value and self._is_marker(c, r):
+                return
             self.cells[r][c] = value
 
     def set_at_pixel(self, x: int, y: int, value: bool) -> None:
@@ -59,7 +71,29 @@ class Grid:
     def toggle_at_pixel(self, x: int, y: int) -> None:
         c, r = x // self.cell, y // self.cell
         if 0 <= c < self.cols and 0 <= r < self.rows:
+            if self._is_marker(c, r):
+                return
             self.cells[r][c] = not self.cells[r][c]
+
+    def spawn_robot_and_target(self) -> None:
+        free: list[tuple[int, int]] = [
+            (c, r)
+            for r in range(self.rows)
+            for c in range(self.cols)
+            if not self.cells[r][c]
+        ]
+        if not free:
+            self.robot = None
+            self.target = None
+            return
+
+        self.robot = random.choice(free)
+        if len(free) == 1:
+            self.target = None
+            return
+
+        free.remove(self.robot)
+        self.target = random.choice(free)
 
     def randomize(self, pillar_prob: float = 0.05) -> None:
         """Warehouse-style layout: shelves + aisles + cross-aisles + sparse pillars."""
@@ -107,6 +141,8 @@ class Grid:
                             if 0 <= cc < self.cols:
                                 self.cells[rr][cc] = False
 
+        self.spawn_robot_and_target()
+
     def draw_walls(self, surface: pygame.Surface, color: tuple[int, int, int] = WALL) -> None:
         cs = self.cell
         for r, row in enumerate(self.cells):
@@ -114,6 +150,21 @@ class Grid:
             for c, filled in enumerate(row):
                 if filled:
                     pygame.draw.rect(surface, color, (c * cs, y, cs, cs))
+
+    def draw_markers(self, surface: pygame.Surface) -> None:
+        cs = self.cell
+        pad = max(2, cs // 6)
+
+        if self.target is not None:
+            c, r = self.target
+            rect = pygame.Rect(c * cs + pad, r * cs + pad, cs - 2 * pad, cs - 2 * pad)
+            pygame.draw.rect(surface, TARGET, rect, border_radius=6)
+
+        if self.robot is not None:
+            c, r = self.robot
+            rect = pygame.Rect(c * cs + pad, r * cs + pad, cs - 2 * pad, cs - 2 * pad)
+            pygame.draw.rect(surface, ROBOT, rect, border_radius=6)
+            pygame.draw.rect(surface, GRID, rect, 1, border_radius=6)
 
 
 def build_grid_overlay() -> pygame.Surface:
@@ -204,17 +255,14 @@ class Slider:
         return False
 
 
-def build_ui(*, grid: Grid, pillar_prob_ref: dict) -> tuple[list[Button], Slider]:
+def build_ui(*, grid: Grid, initial_pillar_prob: float) -> tuple[list[Button], Slider]:
     pad = 14
     x = PANEL_X + pad
     w = PANEL_W - 2 * pad
     h = 44
 
-    def gen() -> None:
-        grid.randomize(pillar_prob=pillar_prob_ref["value"])
-
     buttons = [
-        Button(pygame.Rect(x, 50, w, h), "Generate (R)", gen),
+        Button(pygame.Rect(x, 50, w, h), "Generate (R)", lambda: None),
         Button(pygame.Rect(x, 104, w, h), "Clear (C)", grid.clear),
         Button(pygame.Rect(x, 170, w, h), "Save (soon)", lambda: None, enabled=False),
         Button(pygame.Rect(x, 224, w, h), "Load (soon)", lambda: None, enabled=False),
@@ -222,15 +270,18 @@ def build_ui(*, grid: Grid, pillar_prob_ref: dict) -> tuple[list[Button], Slider
 
     slider = Slider(
         pygame.Rect(x, 330, w, 20),
-        value=pillar_prob_ref["value"],
+        value=initial_pillar_prob,
         min_value=0.0,
         max_value=0.25,
         label="Pillars",
     )
+
+    # Patch in the real generate callback once slider exists.
+    buttons[0].on_click = lambda: grid.randomize(pillar_prob=slider.value)
     return buttons, slider
 
 
-def handle_events(grid: Grid, buttons: list[Button], slider: Slider, *, pillar_prob_ref: dict) -> bool:
+def handle_events(grid: Grid, buttons: list[Button], slider: Slider) -> bool:
     for e in pygame.event.get():
         if e.type == pygame.QUIT:
             return False
@@ -239,12 +290,11 @@ def handle_events(grid: Grid, buttons: list[Button], slider: Slider, *, pillar_p
             if e.key in (pygame.K_q, pygame.K_ESCAPE):
                 return False
             if e.key == pygame.K_r:
-                grid.randomize(pillar_prob=pillar_prob_ref["value"])
+                grid.randomize(pillar_prob=slider.value)
             elif e.key == pygame.K_c:
                 grid.clear()
 
         if slider.handle_event(e):
-            pillar_prob_ref["value"] = slider.value
             continue
 
         elif e.type == pygame.MOUSEBUTTONDOWN:
@@ -275,13 +325,13 @@ def main() -> None:
     grid = Grid()
     overlay = build_grid_overlay()
 
-    pillar_prob_ref = {"value": 0.15}
-    buttons, slider = build_ui(grid=grid, pillar_prob_ref=pillar_prob_ref)
-    grid.randomize(pillar_prob=pillar_prob_ref["value"])
+    buttons, slider = build_ui(grid=grid, initial_pillar_prob=0.05)
+    grid.randomize(pillar_prob=slider.value)
 
-    while handle_events(grid, buttons, slider, pillar_prob_ref=pillar_prob_ref):
+    while handle_events(grid, buttons, slider):
         screen.fill(BG)
         grid.draw_walls(screen)
+        grid.draw_markers(screen)
         screen.blit(overlay, (0, 0))
 
         # Panel
@@ -294,8 +344,6 @@ def main() -> None:
             b.draw(screen, font, hover=b.rect.collidepoint((mx, my)))
         slider.draw(screen, font)
         screen.blit(font.render("More tools soon...", True, PANEL_FG), (PANEL_X + 14, HEIGHT - 34))
-
-        pillar_prob_ref["value"] = slider.value
 
         pygame.display.flip()
         clock.tick(FPS)
